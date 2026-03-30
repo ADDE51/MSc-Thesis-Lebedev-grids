@@ -222,7 +222,7 @@ def block_diff_ops(SCL: Bit3, VCL: Bit3, Nx: int, Nz: int, hx_p, hx_d, hz_p, hz_
     Z_vz_sigma_xx = csc_matrix((v_blocks["z"].size, sigma_blocks["xx"].size))
 
     #construct D_sigma
-    D_sigma = -bmat([
+    D_sigma = bmat([
         [Dx_sxx,        Z_vx_sigma_zz, Dz_sxz],
         [Z_vz_sigma_xx, Dz_szz,        Dx_sxz],
     ], format="csc")
@@ -238,7 +238,7 @@ def block_diff_ops(SCL: Bit3, VCL: Bit3, Nx: int, Nz: int, hx_p, hx_d, hz_p, hz_
     Z_szz_vx = csc_matrix((sigma_blocks["zz"].size, v_blocks["x"].size))
 
     #construct D_v
-    D_v = -bmat([
+    D_v = bmat([
         [Dx_vx,    Z_sxx_vz],
         [Z_szz_vx, Dz_vz],
         [Dz_vx,    Dx_vz],
@@ -248,7 +248,7 @@ def block_diff_ops(SCL: Bit3, VCL: Bit3, Nx: int, Nz: int, hx_p, hx_d, hz_p, hz_
 
 
 #function that defines density matrix and stiffness matrix with Lame param
-def material_matrix(layout: Layout2D, rho: float, lam: float, mu: float):
+def material_matrix(layout: Layout2D, rho: float, lam: float, mu: float, C_mat: np.ndarray):
     #isotropic homogeneous medium
     N_vx = layout.v_blocks["x"].size
     N_vz = layout.v_blocks["z"].size
@@ -261,20 +261,41 @@ def material_matrix(layout: Layout2D, rho: float, lam: float, mu: float):
     M_rho_vz = rho * eye(N_vz, format="csc")
     M_rho = block_diag((M_rho_vx, M_rho_vz), format="csc")
 
-    lam_xx = lam * np.ones(N_sxx)
-    mu_xx = mu * np.ones(N_sxx)
-    lam_zz = lam * np.ones(N_szz)
-    mu_zz = mu * np.ones(N_szz)
-    mu_xz = mu * np.ones(N_sxz)
+    # lam_xx = lam * np.ones(N_sxx)
+    # mu_xx = mu * np.ones(N_sxx)
+    # lam_zz = lam * np.ones(N_szz)
+    # mu_zz = mu * np.ones(N_szz)
+    # mu_xz = mu * np.ones(N_sxz)
 
-    C1 = diags(lam_xx + 2 * mu_xx, format="csc")
-    C2 = diags(lam_zz, format="csc")
-    C3 = diags(mu_xz, format="csc")
+    # C1 = diags(lam_xx + 2 * mu_xx, format="csc")
+    # C2 = diags(lam_zz, format="csc")
+    # C3 = diags(mu_xz, format="csc")
 
+    # C = bmat([
+    #     [C1, C2, None],
+    #     [C2, C1, None],
+    #     [None, None, C3],
+    # ], format="csc")
+
+    #extract values of stiffness matrix
+    C11 = C_mat[0,0]
+    C13 = C_mat[0,1]
+    C15 = C_mat[0,2]
+    C33 = C_mat[1,1]
+    C35 = C_mat[1,2]
+    C55 = C_mat[2,2]
+
+    C11_blk = C11 * eye(N_sxx, format='csc')
+    C13_blk = C13 * eye(N_sxx, format='csc')
+    C33_blk = C33 * eye(N_szz, format='csc')
+    C55_blk = C55 * eye(N_sxz, format='csc')
+  
+
+  
     C = bmat([
-        [C1, C2, None],
-        [C2, C1, None],
-        [None, None, C3],
+        [C11_blk, C13_blk, None],
+        [C13_blk, C33_blk, None],
+        [None, None, C55_blk],
     ], format="csc")
 
     return M_rho, C
@@ -384,9 +405,9 @@ def save_snapshot(filename, field_tag, sigma, v, layout: Layout2D, V_P, V_S, Lx,
 
     ax.set_xlim(0, Lx)
     ax.set_ylim(0, Lz)
-    ax.set_xlabel("x")
-    ax.set_ylabel("z")
-    ax.set_title(rf"{field_tag}, $t$={t:.4f}, $V_P t$={V_P*t:.4f}, $V_S t$={V_S*t:.4f}")
+    ax.set_xlabel(r"$x$", fontsize=18)
+    ax.set_ylabel(r"$z$", fontsize=18)
+    #ax.set_title(rf"{field_tag}, $t$={t:.4f}, $V_P t$={V_P*t:.4f}, $V_S t$={V_S*t:.4f}")
 
     plt.tight_layout()
     plt.savefig(filename, dpi=200)
@@ -474,7 +495,7 @@ def PPW(trace, dt, h, V_P, V_S, cutoff):
 
 
 #function that does timestepping
-def leapfrog(v, sigma, Lx, Lz, dt, Nt, Nx, Nz, rho, V_P, V_S, n_plot, field_gif, SCL, VCL):
+def leapfrog(v, sigma, Lx, Lz, dt, Nt, Nx, Nz, rho, C_mat, V_P, V_S, n_plot, field_gif, SCL, VCL):
     #step sizes
     dx = Lx / (Nx - 1)
     dz = Lz / (Nz - 1)
@@ -488,7 +509,7 @@ def leapfrog(v, sigma, Lx, Lz, dt, Nt, Nx, Nz, rho, V_P, V_S, n_plot, field_gif,
     mu = rho * V_S ** 2
 
     D_sigma, D_v, layout = block_diff_ops(SCL, VCL, Nx, Nz, hx_p, hx_d, hz_p, hz_d)
-    M_rho, C = material_matrix(layout, rho, lam, mu)
+    M_rho, C = material_matrix(layout, rho, lam, mu, C_mat)
     M_rho_inv = diags(1.0 / M_rho.diagonal(), 0, format="csc")
 
     x0, z0 = Lx / 2, Lz / 2
@@ -517,11 +538,11 @@ def leapfrog(v, sigma, Lx, Lz, dt, Nt, Nx, Nz, rho, V_P, V_S, n_plot, field_gif,
         #2. integer velocity update
         v = v + dt * (M_rho_inv @ (q_v + D_sigma @ sigma))
 
-        if n % n_plot == 0:
-            save_field_frame(writer, field_gif, sigma, v, layout, V_P, V_S, Lx, Lz, n)
+        # if n % n_plot == 0:
+        #     save_field_frame(writer, field_gif, sigma, v, layout, V_P, V_S, Lx, Lz, n)
 
-        if n == min(850, Nt - 1):
-            save_snapshot(f"{field_gif}_snapshot.png", field_gif, sigma, v, layout, V_P, V_S, Lx, Lz, n, t)
+        # if n == min(850, Nt - 1):
+        #     save_snapshot(f"1{field_gif}_snapshot.png", field_gif, sigma, v, layout, V_P, V_S, Lx, Lz, n, t)
 
         #PPW
       
@@ -529,7 +550,7 @@ def leapfrog(v, sigma, Lx, Lz, dt, Nt, Nx, Nz, rho, V_P, V_S, n_plot, field_gif,
         trace[n] = field[iz, iz]
 
 
-        # if (n == 100) or (n == 150) or (n == 300) or (n == 400) or (n == 500):
+        # if (n == 1300): #or (n == 150) or (n == 300) or (n == 400) or (n == 500):
         #     v_x = extract_field(v, layout.v_blocks['x'])
         #     plot_cross_section(v_x, Lx, Lz, 'x', iz,  n, title=f'vx slice at n={n}')
        
@@ -556,20 +577,20 @@ def plot_cross_section(field, Lx, Lz, axis, idx, n, title=''):
     if axis == 'x':
         x = np.linspace(0,Lx,nx)
         plt.plot(x,field[:,idx])
-        plt.xlabel('x')
-        plt.ylabel('field value')
-        plt.title(f'{title} z-index={idx}')
-    elif axis == 'x':
+        plt.xlabel(r'$x$', fontsize=18)
+        plt.ylabel(r'$v_x$', fontsize=18)
+        #plt.title(f'{title} z-index={idx}')
+    elif axis == 'z':
         z = np.linspace(0,Lz,nz)
         plt.plot(z,field[idx,:])
-        plt.xlabel('z')
-        plt.ylabel('field value')
-        plt.title(f'{title} x-index={idx}')
+        plt.xlabel(r'$z$', fontsize=18)
+        plt.ylabel(r'$v_z$', fontsize=18)
+        #plt.title(f'{title} x-index={idx}')
     else: 
         raise ValueError('axis must be x or z')
     plt.grid()
     plt.tight_layout()
-    plt.savefig(f'v_x_cross_section_n{n}.png')
+    plt.savefig(f'v_x_cross_section_n{n}_PPW10.png')
     plt.show()
     
     
@@ -578,8 +599,79 @@ def plot_cross_section(field, Lx, Lz, axis, idx, n, title=''):
 
 
 
+def christoffel(theta, rho, C11, C13, C33, C35, C15, C55):
+
+    kx = np.cos(theta)
+    kz = np.sin(theta)
+
+  
+    #GENERAL CASE
+    G11 = C11*kx**2 + 2*C15*kx*kz + C55*kz**2
+    G12 = (C13+C55)*kx*kz + C15*kx**2 + C35*kz**2
+    G21 = G12
+    G22 = C33*kz**2 + 2*C35*kx*kz + C55*kx**2
+
+    G = np.array([[G11, G12],
+                [G12, G22]], dtype=float)
+    eigs = np.linalg.eigvalsh(G)
+
+    cS = np.sqrt(eigs[0] / rho)
+    cP = np.sqrt(eigs[1] / rho) 
+    return cS, cP, G
 
 
+def curves(lam, mu, rho, ntheta, C11, C13, C33, C35, C15, C55):
+    theta = np.linspace(0.0, 2*np.pi, ntheta)
+
+    cP = np.zeros_like(theta)
+    cS = np.zeros_like(theta)
+
+    for i, th in enumerate(theta):
+        cS[i], cP[i], _ = christoffel(th, rho, C11, C13, C33, C35, C15, C55)
+
+    # angle plot
+    plt.figure(figsize=(8, 4.5))
+    plt.plot(theta, cP, label="P-wave")
+    plt.plot(theta, cS, label="S-wave")
+    plt.xlabel(r"$\theta$")
+    plt.ylabel("phase velocity")
+    plt.grid(True, alpha=0.3)
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig('christoffel_angle_plot.png', dpi=200)
+    plt.show()
+
+    # polar Christoffel curves
+    fig = plt.figure(figsize=(6, 6))
+    ax = fig.add_subplot(111, projection="polar")
+    ax.plot(theta, cP, label="P-wave")
+    ax.plot(theta, cS, label="S-wave")
+    ax.set_title("Christoffel phase-velocity curves")
+    ax.legend(loc="upper right")
+    plt.tight_layout()
+    plt.show()
+
+
+    xP = cP * np.cos(theta)
+    zP = cP * np.sin(theta)
+    xS = cS * np.cos(theta)
+    zS = cS * np.sin(theta)
+
+    plt.figure(figsize=(6, 6))
+    plt.plot(xP, zP, label="qP")
+    plt.plot(xS, zS, label="qS")
+    plt.axis("equal")
+    plt.xlabel("x")
+    plt.ylabel("z")
+    plt.grid(True, alpha=0.3)
+    plt.legend()
+    plt.title("Christoffel curves")
+    plt.tight_layout()
+    plt.savefig('christoffel_curves.png',dpi=200)
+    plt.show()
+
+    return theta, cP, cS
+    
 
 
 
@@ -597,7 +689,7 @@ def main():
 
     # domain and grid
     Lx, Lz = 3.0, 3.0
-    Nx, Nz = 150, 150
+    Nx, Nz = 300, 300
 
     # build layout once to size global state vectors correctly
     layout0 = build_layout_from_clusters(SCL, VCL, Nx, Nz)
@@ -609,6 +701,24 @@ def main():
     rho = 1.0
     V_P = 3.0
     V_S = 1.0
+
+    mu = rho * V_S**2
+    lam = rho * (V_P**2 -2*V_S**2)
+
+    
+    C11 = lam+2*mu#10.0
+    C13 = lam#2.5
+    C15 = 0#0.7
+    C33 = lam+2*mu#5.0
+    C35 = 0#-0.5
+    C55 = mu#1.2
+
+    C_mat = np.array([
+        [C11, C13, C15],
+        [C13, C33, C35],
+        [C15, C35, C55]
+    ])
+    print(f'Eigvals of C: {np.linalg.eigvalsh(C_mat)}')
 
     dx = Lx / (Nx - 1)
     dt =  0.1 * dx / (np.sqrt(2) * V_P)
@@ -626,7 +736,7 @@ def main():
     #run
     n_plot = 10
     field_gif = "v_x"
-    v, sigma, layout = leapfrog(v, sigma, Lx, Lz, dt, Nt, Nx, Nz, rho, V_P, V_S, n_plot, field_gif, SCL, VCL)
+    v, sigma, layout = leapfrog(v, sigma, Lx, Lz, dt, Nt, Nx, Nz, rho, C_mat, V_P, V_S, n_plot, field_gif, SCL, VCL)
 
     #extract fields
     sigma_xx = extract_field(sigma, layout.sigma_blocks["xx"])
@@ -637,7 +747,7 @@ def main():
 
    
     print(f"Simulating with V_P={V_P}, V_S={V_S}")
-    print(f"dt={dt} and Nt={Nt}")
+    print(f"dt={dt}, Nt={Nt}, Nx={Nx}, Nz={Nz}, h={dx}")
     print("Done.")
     print("sigma_xx shape:", sigma_xx.shape, "grid:", layout.sigma_fields["xx"].grid)
     print("sigma_zz shape:", sigma_zz.shape, "grid:", layout.sigma_fields["zz"].grid)
@@ -645,6 +755,10 @@ def main():
     print("v_x shape:", v_x.shape, "grid:", layout.v_fields["x"].grid)
     print("v_z shape:", v_z.shape, "grid:", layout.v_fields["z"].grid)
 
+
+    #print(f'Eigvals of C: {np.linalg.eigvalsh(C_mat)}')
+
+    curves(lam,mu,rho,721, C11, C13, C33, C35, C15, C55)
 
 if __name__ == "__main__":
     main()
