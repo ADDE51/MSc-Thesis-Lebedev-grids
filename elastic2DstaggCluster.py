@@ -24,8 +24,6 @@ Dependencies
 - NumPy 1.26.4
 - SciPy 1.17.0
 - Matplotlib 3.7.5
-- pathlib
-- tikzplotlib 0.10.1 (optional) 
 - ImageIO 2.37.3
 
 Standard library:
@@ -838,7 +836,7 @@ def main():
 
     #curves(lam,mu,rho,721, C11, C13, C33, C35, C15, C55)
 
-    
+
 
     f_dom, f_max, freq, amp = estimate_fmax_from_source(
     dt=dt,
