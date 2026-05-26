@@ -1,18 +1,3 @@
-'''
-Filename: acoustic_eigs2.py
-Author: Adam Kautzky
-Date 2026-05-07
-Description: This code performs eigenvalue error analysis for the spatial operator of the 2D acoustic wave eq, comparing a staggered-grid discretization and the SBP-projection method.
-             The code creates a Tikz figure of the convergence plot.
-Dependencies:
-    numpy 1.26.4
-    scipy 1.17.0
-    matplotlib 3.7.5
-'''
-
-
-
-
 """
 Eigenvalue Convergence Comparison for Two Acoustic Wave Discretizations
 =========================================================================
