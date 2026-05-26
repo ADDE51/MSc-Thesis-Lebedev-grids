@@ -1,3 +1,44 @@
+"""
+2D Elastic Wave Solver on a Staggered grid
+=========================================================================
+
+Purpose
+-------
+This script uses the binary grid/cluster notation developed in the report, to solve the 2D elastic wave 
+equation in a homogeneous medium using the Virieux staggered grid scheme. 
+
+
+Outputs
+-------
+Depending on the enabled options, the script may generate:
+
+- a PNG snapshot of the selected wavefield component
+- GIF of the simultation
+- cross-section plots
+- source-spectrum plots
+- Christoffel phase-velocity plots
+
+
+Dependencies
+------------
+- NumPy 1.26.4
+- SciPy 1.17.0
+- Matplotlib 3.7.5
+- pathlib
+- tikzplotlib 0.10.1 (optional) 
+- ImageIO 2.37.3
+
+Standard library:
+- dataclasses
+- typing
+
+Author
+------
+Adam Kautzky
+
+"""
+
+
 import numpy as np
 from dataclasses import dataclass
 from typing import Tuple, Dict
@@ -8,24 +49,19 @@ from matplotlib.patches import Circle
 import imageio.v2 as imageio
 
 
-# ============================================================
-# 2D isotropic elastic wave simulation on a single staggered grid
-# with cluster/grid logic and block-wise operators
-# ============================================================
-
 
 # ------------------------------------------------------------
 # Binary logic for clusters / grids
 # ------------------------------------------------------------
 
-#tuple to represent the cluster/grid notation
+#tuple to represent the binary cluster/grid notation
 Bit3 = Tuple[int, int, int]
 
 #XOR function
 def xor_bit(a: Bit3, b: Bit3) -> Bit3:
     return (a[0] ^ b[0], a[1] ^ b[1], a[2] ^ b[2])
 
-#shifts as defined in LebedevElastics
+#shifts as defined in the thesis report
 VELOCITY_SHIFT: Dict[str, Bit3] = { #velocity shift in axis direction
     "x": (1, 0, 0),
     "y": (0, 1, 0),
@@ -42,16 +78,19 @@ STRESS_SHIFT: Dict[str, Bit3] = { #shear stress shift in "missing orthogonal" di
 }
 
 
-#dataclass that tries to emulate C struct with (family, component, cluster)
+
 #certain functions are defined as properties of items of this class, these include: 
 # 1. computing the shift, 
 # 2. computing the grid,
 # 3. computing the dual cluster
 @dataclass(frozen=True)
 class FieldID:
+    """
+    Identifier for a single staggered-grid field component
+    """
     family: str        # "v" or "sigma"
     component: str     # "x", "z", "xx", "zz", "xz"
-    cluster: Bit3
+    cluster: Bit3    
 
 
     #1. compute the shift
@@ -77,6 +116,9 @@ class FieldID:
 #define this class in an effort to avoid typical index slicing, contains the offset, size and shape
 @dataclass(frozen=True)
 class Block:
+    """
+    Metadata describing the storage of one field component in a state vector
+    """
     offset: int
     size: int
     shape: tuple[int, int]
@@ -84,15 +126,18 @@ class Block:
 #this class contains the fields, and their blocks
 @dataclass(frozen=True)
 class Layout2D:
+    """
+    Collection of staggered-grid fields and their global-vector block layouts
+    """
     sigma_fields: dict
     v_fields: dict
     sigma_blocks: dict
     v_blocks: dict
 
-
 # ------------------------------------------------------------
 # Layout from derived grids
 # ------------------------------------------------------------
+
 
 #function that determines the shape of matrices based on the grid
 def shape_from_grid(grid: Bit3, Nx: int, Nz: int):
@@ -140,7 +185,7 @@ def build_layout_from_clusters(SCL: Bit3, VCL: Bit3, Nx: int, Nz: int) -> Layout
 #function that extracts and reshapes the variable from the block
 def extract_field(vec: np.ndarray, block: Block) -> np.ndarray:
     sl = slice(block.offset, block.offset + block.size)
-    return vec[sl].reshape(block.shape, order='F')
+    return vec[sl].reshape(block.shape, order="F")
 
 
 
@@ -247,9 +292,10 @@ def block_diff_ops(SCL: Bit3, VCL: Bit3, Nx: int, Nz: int, hx_p, hx_d, hz_p, hz_
     return D_sigma, D_v, layout
 
 
+
 #function that defines density matrix and stiffness matrix with Lame param
 def material_matrix(layout: Layout2D, rho: float, lam: float, mu: float, C_mat: np.ndarray):
-    #isotropic homogeneous medium
+
     N_vx = layout.v_blocks["x"].size
     N_vz = layout.v_blocks["z"].size
 
@@ -261,21 +307,6 @@ def material_matrix(layout: Layout2D, rho: float, lam: float, mu: float, C_mat: 
     M_rho_vz = rho * eye(N_vz, format="csc")
     M_rho = block_diag((M_rho_vx, M_rho_vz), format="csc")
 
-    # lam_xx = lam * np.ones(N_sxx)
-    # mu_xx = mu * np.ones(N_sxx)
-    # lam_zz = lam * np.ones(N_szz)
-    # mu_zz = mu * np.ones(N_szz)
-    # mu_xz = mu * np.ones(N_sxz)
-
-    # C1 = diags(lam_xx + 2 * mu_xx, format="csc")
-    # C2 = diags(lam_zz, format="csc")
-    # C3 = diags(mu_xz, format="csc")
-
-    # C = bmat([
-    #     [C1, C2, None],
-    #     [C2, C1, None],
-    #     [None, None, C3],
-    # ], format="csc")
 
     #extract values of stiffness matrix
     C11 = C_mat[0,0]
@@ -285,10 +316,10 @@ def material_matrix(layout: Layout2D, rho: float, lam: float, mu: float, C_mat: 
     C35 = C_mat[1,2]
     C55 = C_mat[2,2]
 
-    C11_blk = C11 * eye(N_sxx, format='csc')
-    C13_blk = C13 * eye(N_sxx, format='csc')
-    C33_blk = C33 * eye(N_szz, format='csc')
-    C55_blk = C55 * eye(N_sxz, format='csc')
+    C11_blk = C11 * eye(N_sxx, format="csc")
+    C13_blk = C13 * eye(N_sxx, format="csc")
+    C33_blk = C33 * eye(N_szz, format="csc")
+    C55_blk = C55 * eye(N_sxz, format="csc")
   
 
   
@@ -301,56 +332,63 @@ def material_matrix(layout: Layout2D, rho: float, lam: float, mu: float, C_mat: 
     return M_rho, C
 
 
+
 # ------------------------------------------------------------
-# Initial conditions / sources
+# Source
 # ------------------------------------------------------------
 
-def initial_condition_sigma(sigma, layout: Layout2D, Lx, Lz, Nx, Nz, A, s):
-    xx_block = layout.sigma_blocks["xx"]
-    zz_block = layout.sigma_blocks["zz"]
+#define coordinates for given grid
+def coords_for_grid(grid: Bit3, Nx: int, Nz: int,
+                    Lx: float, Lz: float):
+    dx = Lx / (Nx - 1)
+    dz = Lz / (Nz - 1)
 
-    xx_shape = xx_block.shape
-    zz_shape = zz_block.shape
+    if grid[0] == 0:
+        x = np.linspace(0.0, Lx, Nx)
+    else:
+        x = (np.arange(Nx - 1) + 0.5) * dx
 
-    x_xx = np.linspace(0, Lx, xx_shape[0])
-    z_xx = np.linspace(0, Lz, xx_shape[1])
-    X_xx, Z_xx = np.meshgrid(x_xx, z_xx, indexing="ij")
+    if grid[2] == 0:
+        z = np.linspace(0.0, Lz, Nz)
+    else:
+        z = (np.arange(Nz - 1) + 0.5) * dz
 
-    x_zz = np.linspace(0, Lx, zz_shape[0])
-    z_zz = np.linspace(0, Lz, zz_shape[1])
-    X_zz, Z_zz = np.meshgrid(x_zz, z_zz, indexing="ij")
+    return x, z    
 
-    x0 = Lx / 2
-    z0 = Lz / 2
+def gaussian_on_field_grid(field: FieldID,
+                        Nx: int, Nz: int,
+                        Lx: float, Lz: float,
+                        x0: float, z0: float,
+                        s: float):
+    x, z = coords_for_grid(field.grid, Nx, Nz, Lx, Lz)
 
-    g_xx = A * np.exp(-((X_xx - x0) ** 2 + (Z_xx - z0) ** 2) / (2 * s ** 2))
-    g_zz = A * np.exp(-((X_zz - x0) ** 2 + (Z_zz - z0) ** 2) / (2 * s ** 2))
-
-    sigma[xx_block.offset:xx_block.offset + xx_block.size] = g_xx.flatten(order="F")
-    sigma[zz_block.offset:zz_block.offset + zz_block.size] = -g_zz.flatten(order="F")
-    return sigma
-
-
-def gaussian_on_block_grid(block: Block, Lx, Lz, x0, z0, s):
-    x = np.linspace(0, Lx, block.shape[0])
-    z = np.linspace(0, Lz, block.shape[1])
     X, Z = np.meshgrid(x, z, indexing="ij")
-    g = np.exp(-((X - x0) ** 2 + (Z - z0) ** 2) / (2 * s ** 2))
+
+    g = np.exp(
+        -((X - x0)**2 + (Z - z0)**2) / (2.0 * s**2)
+    )
+
     return g.flatten(order="F")
 
-
-def pressure_source(layout: Layout2D, Lx, Lz, x0, z0, s, amp):
+def source(layout: Layout2D, Nx, Nz, Lx, Lz, x0, z0, s, amp):
     N_sigma = sum(block.size for block in layout.sigma_blocks.values())
     q_sigma = np.zeros(N_sigma)
 
-    g_xx = gaussian_on_block_grid(layout.sigma_blocks["xx"], Lx, Lz, x0, z0, s)
-    g_zz = gaussian_on_block_grid(layout.sigma_blocks["zz"], Lx, Lz, x0, z0, s)
 
+    g_xz = gaussian_on_field_grid(layout.sigma_fields["xz"], Nx, Nz, Lx, Lz, x0, z0, s)
+
+    xz_block = layout.sigma_blocks["xz"]
     xx_block = layout.sigma_blocks["xx"]
     zz_block = layout.sigma_blocks["zz"]
+  
+    #shear source
+    q_sigma[xz_block.offset:xz_block.offset + xz_block.size] = amp * g_xz
 
-    q_sigma[xx_block.offset:xx_block.offset + xx_block.size] = amp * g_xx
-    q_sigma[zz_block.offset:zz_block.offset + zz_block.size] = amp * g_zz
+    #explosive sources, need to define g_xx etc
+    # q_sigma[xx_block.offset:xx_block.offset + xx_block.size] = amp * g_xx
+    # q_sigma[yy_block.offset:yy_block.offset + yy_block.size] = amp * g_yy
+    # q_sigma[zz_block.offset:zz_block.offset + zz_block.size] = amp * g_zz
+
     return q_sigma
 
 
@@ -378,8 +416,11 @@ def save_snapshot(filename, field_tag, sigma, v, layout: Layout2D, V_P, V_S, Lx,
         raise ValueError("Unknown field.")
 
     fig, ax = plt.subplots(figsize=(6, 5))
-
-    VMAX = 0.15
+    #VMAX = 0.15
+    # VMAX = np.percentile(np.abs(field), 99.5)
+    VMAX = np.percentile(np.abs(field), 99)
+    if VMAX == 0:
+        VMAX = 0.15
     im = ax.imshow(
         field.T,
         origin="lower",
@@ -387,7 +428,7 @@ def save_snapshot(filename, field_tag, sigma, v, layout: Layout2D, V_P, V_S, Lx,
         aspect="auto",
         vmin=-VMAX,
         vmax=VMAX,
-        cmap="seismic",
+        cmap ="RdBu_r"#cmap="seismic",
     )
     plt.colorbar(im, ax=ax)
 
@@ -401,7 +442,7 @@ def save_snapshot(filename, field_tag, sigma, v, layout: Layout2D, V_P, V_S, Lx,
 
     ax.plot(x0, z0, "ko", markersize=4)
     ax.text(x0 + 0.01 * Lx, z0 + V_P * t + 0.01 * Lz, "P", fontsize=12)
-    ax.text(x0 + 0.01 * Lx, z0 + V_S * t + 0.01 * Lz, "S", fontsize=12)
+    ax.text(x0 + 0.1 * Lx, z0 + V_S * t + 0.01 * Lz, "S", fontsize=12)
 
     ax.set_xlim(0, Lx)
     ax.set_ylim(0, Lz)
@@ -411,6 +452,7 @@ def save_snapshot(filename, field_tag, sigma, v, layout: Layout2D, V_P, V_S, Lx,
 
     plt.tight_layout()
     plt.savefig(filename, dpi=200)
+    plt.show()
     plt.close(fig)
 
 
@@ -429,7 +471,9 @@ def save_field_frame(writer, field_gif, sigma, v, layout: Layout2D, V_P, V_S, Lx
         raise ValueError("Unknown field.")
 
     fig, ax = plt.subplots(figsize=(6, 5))
-    VMAX = 0.15
+    VMAX = np.percentile(np.abs(field), 99.5)
+    if VMAX == 0:
+        VMAX = 0.15
 
     im = ax.imshow(
         field.T,
@@ -438,7 +482,7 @@ def save_field_frame(writer, field_gif, sigma, v, layout: Layout2D, V_P, V_S, Lx
         aspect="auto",
         vmin=-VMAX,
         vmax=VMAX,
-        cmap="seismic",
+        cmap="RdBu_r",
     )
     plt.colorbar(im, ax=ax)
     plt.title(rf"{field_gif} at step {n}, $V_S={V_S}, V_P={V_P}$")
@@ -453,6 +497,34 @@ def save_field_frame(writer, field_gif, sigma, v, layout: Layout2D, V_P, V_S, Lx
     plt.close(fig)
 
 
+
+def plot_cross_section(field, Lx, Lz, axis, idx, n, title=""):
+    nx, nz = field.shape
+    if axis == "x":
+        x = np.linspace(0,Lx,nx)
+        plt.plot(x,field[:,idx])
+        plt.xlabel(r"$x$", fontsize=18)
+        plt.ylabel(r"$v_x$", fontsize=18)
+        #plt.title(f"{title} z-index={idx}")
+    elif axis == "z":
+        z = np.linspace(0,Lz,nz)
+        plt.plot(z,field[idx,:])
+        plt.xlabel(r"$z$", fontsize=18)
+        plt.ylabel(r"$v_z$", fontsize=18)
+        #plt.title(f"{title} x-index={idx}")
+    else: 
+        raise ValueError("axis must be x or z")
+    plt.grid()
+    plt.tight_layout()
+    plt.savefig(f"v_x_cross_section_n{n}_PPW10.png")
+    plt.show()
+    
+    
+
+
+# ------------------------------------------------------------
+# Estimate Point Per Wavelength
+# ------------------------------------------------------------
 
 def PPW(trace, dt, h, V_P, V_S, cutoff):
     F = np.fft.rfft(trace)
@@ -494,8 +566,29 @@ def PPW(trace, dt, h, V_P, V_S, cutoff):
 
 
 
-#function that does timestepping
+def estimate_fmax_from_source(dt, Nt, f0, t0, cutoff=0.05): #specific to ricker pulse freq
+    t = np.arange(Nt) * dt
+    s = ricker(t, f0, t0)
+
+    F = np.fft.rfft(s)
+    freq = np.fft.rfftfreq(Nt, d=dt)
+    amp = np.abs(F)
+
+    amp_max = np.max(amp)
+    mask = amp >= cutoff * amp_max
+
+    f_dom = freq[np.argmax(amp)]
+    f_max = freq[mask][-1]
+
+    return f_dom, f_max, freq, amp
+
+
+# ------------------------------------------------------------
+# Time stepping
+# ------------------------------------------------------------
+
 def leapfrog(v, sigma, Lx, Lz, dt, Nt, Nx, Nz, rho, C_mat, V_P, V_S, n_plot, field_gif, SCL, VCL):
+
     #step sizes
     dx = Lx / (Nx - 1)
     dz = Lz / (Nz - 1)
@@ -505,8 +598,8 @@ def leapfrog(v, sigma, Lx, Lz, dt, Nt, Nx, Nz, rho, C_mat, V_P, V_S, n_plot, fie
     hz_p = dz
     hz_d = dz
 
-    lam = rho * (V_P ** 2 - 2 * V_S ** 2)
-    mu = rho * V_S ** 2
+    mu = rho * V_S**2
+    lam = rho * (V_P**2 -2*V_S**2)
 
     D_sigma, D_v, layout = block_diff_ops(SCL, VCL, Nx, Nz, hx_p, hx_d, hz_p, hz_d)
     M_rho, C = material_matrix(layout, rho, lam, mu, C_mat)
@@ -514,90 +607,65 @@ def leapfrog(v, sigma, Lx, Lz, dt, Nt, Nx, Nz, rho, C_mat, V_P, V_S, n_plot, fie
 
     x0, z0 = Lx / 2, Lz / 2
     s = 0.05
+    f0 = 15
+    t0 = 1 / f0
 
     q_v = np.zeros(len(v))
     q_sigma = np.zeros(len(sigma))
-    # q_sigma = pressure_source(layout, Lx, Lz, x0, z0, s, amp=1.0)
-
+   
     #PPW
     trace = np.zeros(Nt)
-    field = extract_field(v, layout.v_blocks['x']) #v_x
+    field = extract_field(v, layout.v_blocks["x"]) #v_x
     nx,nz = field.shape
     ix = int(0.3*nx) 
     iz = int(0.4*nz)
     
-
-    writer = imageio.get_writer(f"{field_gif}_waveP{V_P}S{V_S}.gif", mode="I", fps=20)
-
+    #writer = imageio.get_writer(f"GIF{field_gif}_waveP{V_P}S{V_S}N{Nx}.gif", mode="I", fps=20)
+    snapshot_time = 0.45
+    snapshot_n = int(snapshot_time/dt)
     for n in range(Nt):
-        t = n * dt
 
+        t = n * dt
+        pulse = ricker(t, f0, t0)
+        q_sigma =  source(layout, Nx, Nz, Lx, Lz, x0, z0, s, pulse)
         #1. half-integer stress update 
         sigma = sigma + dt * (C @ (q_sigma + D_v @ v)) #minus sign factored out
 
         #2. integer velocity update
         v = v + dt * (M_rho_inv @ (q_v + D_sigma @ sigma))
 
+        #FOR GIF WRITING
         # if n % n_plot == 0:
         #     save_field_frame(writer, field_gif, sigma, v, layout, V_P, V_S, Lx, Lz, n)
 
-        # if n == min(850, Nt - 1):
-        #     save_snapshot(f"1{field_gif}_snapshot.png", field_gif, sigma, v, layout, V_P, V_S, Lx, Lz, n, t)
+        if n == snapshot_n:
+               save_snapshot(f"2D{field_gif}_snapshotN{Nx}.png", field_gif, sigma, v, layout, V_P, V_S, Lx, Lz, n, t)
 
         #PPW
-      
-        field = extract_field(v, layout.v_blocks['x']) #updated field
+        field = extract_field(v, layout.v_blocks["x"]) #updated field
         trace[n] = field[iz, iz]
 
 
         # if (n == 1300): #or (n == 150) or (n == 300) or (n == 400) or (n == 500):
-        #     v_x = extract_field(v, layout.v_blocks['x'])
-        #     plot_cross_section(v_x, Lx, Lz, 'x', iz,  n, title=f'vx slice at n={n}')
-       
+        #     v_x = extract_field(v, layout.v_blocks["x"])
+        #     plot_cross_section(v_x, Lx, Lz, "x", iz,  n, title=f"vx slice at n={n}")
+   
 
-
-    writer.close()
+   # writer.close()
     i0 = Nt // 5      # skip early time
     i1 = Nt // 2      # before reflections
 
     trace_win = trace[i0:i1] #restrict time window 
 
-
+    print(f"PRACTICAL PPW = {V_S / (f0*dx)}")
     PPW(trace_win, dt, dx, V_P, V_S, 0.1)
     return v, sigma, layout
 
 
 
-
-
-
-
-def plot_cross_section(field, Lx, Lz, axis, idx, n, title=''):
-    nx, nz = field.shape
-    if axis == 'x':
-        x = np.linspace(0,Lx,nx)
-        plt.plot(x,field[:,idx])
-        plt.xlabel(r'$x$', fontsize=18)
-        plt.ylabel(r'$v_x$', fontsize=18)
-        #plt.title(f'{title} z-index={idx}')
-    elif axis == 'z':
-        z = np.linspace(0,Lz,nz)
-        plt.plot(z,field[idx,:])
-        plt.xlabel(r'$z$', fontsize=18)
-        plt.ylabel(r'$v_z$', fontsize=18)
-        #plt.title(f'{title} x-index={idx}')
-    else: 
-        raise ValueError('axis must be x or z')
-    plt.grid()
-    plt.tight_layout()
-    plt.savefig(f'v_x_cross_section_n{n}_PPW10.png')
-    plt.show()
-    
-    
-
-
-
-
+# ---------------------------------------------------------
+# Christoffel curvess
+# ------------------------------------------------------------
 
 def christoffel(theta, rho, C11, C13, C33, C35, C15, C55):
 
@@ -638,7 +706,7 @@ def curves(lam, mu, rho, ntheta, C11, C13, C33, C35, C15, C55):
     plt.grid(True, alpha=0.3)
     plt.legend()
     plt.tight_layout()
-    plt.savefig('christoffel_angle_plot.png', dpi=200)
+    plt.savefig("christoffel_angle_plot.png", dpi=200)
     plt.show()
 
     # polar Christoffel curves
@@ -646,7 +714,7 @@ def curves(lam, mu, rho, ntheta, C11, C13, C33, C35, C15, C55):
     ax = fig.add_subplot(111, projection="polar")
     ax.plot(theta, cP, label="P-wave")
     ax.plot(theta, cS, label="S-wave")
-    ax.set_title("Christoffel phase-velocity curves")
+   # ax.set_title("Christoffel phase-velocity curves")
     ax.legend(loc="upper right")
     plt.tight_layout()
     plt.show()
@@ -661,21 +729,22 @@ def curves(lam, mu, rho, ntheta, C11, C13, C33, C35, C15, C55):
     plt.plot(xP, zP, label="qP")
     plt.plot(xS, zS, label="qS")
     plt.axis("equal")
-    plt.xlabel("x")
-    plt.ylabel("z")
-    plt.grid(True, alpha=0.3)
+    plt.xlabel(r"$x$",fontsize=18)
+    plt.ylabel(r"$z$",fontsize=18)
+   # plt.grid(True, alpha=0.3)
     plt.legend()
-    plt.title("Christoffel curves")
+   # plt.title("Christoffel curves")
     plt.tight_layout()
-    plt.savefig('christoffel_curves.png',dpi=200)
+    plt.savefig("christoffel_curves.png",dpi=200)
     plt.show()
 
     return theta, cP, cS
     
 
 
-
-
+# ------------------------------------------------------------
+# Main
+# ------------------------------------------------------------
 
 def main():
 
@@ -689,7 +758,7 @@ def main():
 
     # domain and grid
     Lx, Lz = 3.0, 3.0
-    Nx, Nz = 300, 300
+    Nx, Nz = 501, 501
 
     # build layout once to size global state vectors correctly
     layout0 = build_layout_from_clusters(SCL, VCL, Nx, Nz)
@@ -697,8 +766,8 @@ def main():
     N_sigma = sum(block.size for block in layout0.sigma_blocks.values())
     N_v = sum(block.size for block in layout0.v_blocks.values())
 
-    #material
-    rho = 1.0
+    #material parameters
+    rho = 2.5
     V_P = 3.0
     V_S = 1.0
 
@@ -706,6 +775,7 @@ def main():
     lam = rho * (V_P**2 -2*V_S**2)
 
     
+    # ISOTROPIC MEDIA
     C11 = lam+2*mu#10.0
     C13 = lam#2.5
     C15 = 0#0.7
@@ -713,15 +783,25 @@ def main():
     C35 = 0#-0.5
     C55 = mu#1.2
 
+
+    # VTI MEDIA
+    # C11 = 10.0
+    # C13 = 2.5
+    # C15 = 0.7
+    # C33 = 5.0
+    # C35 = 0
+    # C55 = 1.2
+
     C_mat = np.array([
         [C11, C13, C15],
         [C13, C33, C35],
         [C15, C35, C55]
     ])
-    print(f'Eigvals of C: {np.linalg.eigvalsh(C_mat)}')
+    print(f"Eigvals of C: {np.linalg.eigvalsh(C_mat)}")
 
     dx = Lx / (Nx - 1)
-    dt =  0.1 * dx / (np.sqrt(2) * V_P)
+    CFL = 1.0
+    dt = CFL * dx / (np.sqrt(2) * V_P)
 
     T = 1.0
     Nt = int(np.ceil(T / dt))
@@ -730,12 +810,10 @@ def main():
     v = np.zeros(N_v)
     sigma = np.zeros(N_sigma)
 
-    #initial condition
-    sigma = initial_condition_sigma(sigma, layout0, Lx, Lz, Nx, Nz, A=1.0, s=0.05)
 
     #run
     n_plot = 10
-    field_gif = "v_x"
+    field_gif = "v_x" #"v_x"
     v, sigma, layout = leapfrog(v, sigma, Lx, Lz, dt, Nt, Nx, Nz, rho, C_mat, V_P, V_S, n_plot, field_gif, SCL, VCL)
 
     #extract fields
@@ -756,9 +834,35 @@ def main():
     print("v_z shape:", v_z.shape, "grid:", layout.v_fields["z"].grid)
 
 
-    #print(f'Eigvals of C: {np.linalg.eigvalsh(C_mat)}')
+    #print(f"Eigvals of C: {np.linalg.eigvalsh(C_mat)}")
 
-    curves(lam,mu,rho,721, C11, C13, C33, C35, C15, C55)
+    #curves(lam,mu,rho,721, C11, C13, C33, C35, C15, C55)
+
+    
+
+    f_dom, f_max, freq, amp = estimate_fmax_from_source(
+    dt=dt,
+    Nt=Nt,
+    f0=6,
+    t0=0.1,
+    cutoff=0.1
+    )
+
+    print("Dominant frequency:", f_dom)
+    print("Maximum relevant frequency:", f_max)
+
+    PPW_min = V_S / (f_max * dx)
+    print("Minimum PPW:", PPW_min)
+
+    plt.figure(figsize=(6, 4))
+    plt.plot(freq, amp)
+    plt.axvline(f_dom, linestyle="--", label=fr"$f_{{dom}}={f_dom:.2f}$")
+    plt.axvline(f_max, linestyle=":", label=fr"$f_{{max}}={f_max:.2f}$")
+    plt.xlabel("Frequency")
+    plt.ylabel("Amplitude")
+    plt.legend(frameon=False)
+    plt.tight_layout()
+    plt.show()
 
 if __name__ == "__main__":
     main()
